@@ -22,5 +22,7 @@ int command_run_all(int number_of_arguments, char **arguments);
 int command_print_all(int number_of_arguments, char **arguments);
 int command_kill_all(int number_of_arguments, char **arguments);
 
+//Space w Ay harey
+
 
 #endif	// !FOS_KERN_MONITOR_H
