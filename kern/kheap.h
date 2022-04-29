@@ -21,4 +21,5 @@ unsigned int kheap_physical_address(unsigned int virtual_address);
 
 int numOfKheapVACalls ;
 
+void *nextFit(unsigned int size);
 #endif // FOS_KERN_KHEAP_H_
