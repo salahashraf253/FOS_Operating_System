@@ -1,19 +1,62 @@
 #include <inc/memlayout.h>
 #include <kern/kheap.h>
 #include <kern/memory_manager.h>
-
 //2022: NOTE: All kernel heap allocations are multiples of PAGE_SIZE (4KB)
 
-void *nextFit(unsigned int size);
-struct KernalHeapPages{
+struct KernelHeapPages{
 	uint32 startAddress;
-	uint32 size;
-}kernalHeapPages[(KERNEL_HEAP_MAX - KERNEL_HEAP_START) / PAGE_SIZE];
-uint32 kernalHeapFirstFreeVirtualAddress = KERNEL_HEAP_START;
+	bool isEmpty;
+}kernelHeapPages[(KERNEL_HEAP_MAX - KERNEL_HEAP_START) / PAGE_SIZE];
+uint32 lastAllocatedKHpage = KERNEL_HEAP_START;
+bool isKHpageEmpty = 1;
+void initializaKernelHeapPages(){
+	cprintf("Hello in Kmalloc\n");
+	int heapPageIndex;
+	for(int i=KERNEL_HEAP_START;i<KERNEL_HEAP_MAX;i+=PAGE_SIZE){
+		heapPageIndex=(i-KERNEL_HEAP_START)/PAGE_SIZE;
+		kernelHeapPages[heapPageIndex].startAddress = i;
+		kernelHeapPages[heapPageIndex].isEmpty=1;
+	}
+	//return it false to keep the Kernel heap pages the same without zeros
+	isKHpageEmpty=0;
+}
+void *getStartAddress(uint32 start,uint32 end,uint32 size){
+	uint32 freeSize=0;
+	while(start<end){
+		if (kernelHeapPages[(start - KERNEL_HEAP_START) / PAGE_SIZE].isEmpty){
+			freeSize += PAGE_SIZE;
+			if (freeSize == size){
+				start = (start+PAGE_SIZE)-size;
+				break;
+			}
+		}
+		else{
+			freeSize = 0;
+		}
+		start += PAGE_SIZE;
+	}
+	if(freeSize!=size){
+		return 0;
+	}
+	return (void*)start;
+}
+void *nextFit(uint32 size){
+	//loop from the lastAllocated Kernel heap page to kernel heap max
+	uint32 startAddress=(uint32)getStartAddress(lastAllocatedKHpage,KERNEL_HEAP_MAX,size);
+	if(startAddress!=0){
+		return (void*)startAddress;
+	}
+	//loop from the Kernel heap start to last allocated Kernel heap page
+	startAddress=(uint32)getStartAddress(KERNEL_HEAP_START,lastAllocatedKHpage,size);
+	if(startAddress!=0){
+		return (void*)startAddress;
+	}
+	return 0;	//there is no enough space in the heap
+}
 
 void* kmalloc(unsigned int size)
 {
-//	cprintf("Hello,In kmalloc test\n");
+//	cprintf("Hello in Kmalloc\n");
 	//TODO: [PROJECT 2022 - [1] Kernel Heap] kmalloc()
 	// Write your code here, remove the panic and write your code
 	//kpanic_into_prompt("kmalloc() is not implemented yet...!!");
@@ -22,44 +65,49 @@ void* kmalloc(unsigned int size)
 	//NOTE: Allocation using NEXTFIT strategy
 	//NOTE: All kernel heap allocations are multiples of PAGE_SIZE (4KB)
 	//refer to the project presentation and documentation for details
-	/* start of NEXTFIT strategy  */
-//	cprintf("Size before rounding: %d\n",size);
-	size=ROUNDUP(size,PAGE_SIZE);	//from the document
-//	cprintf("Size after rounding: %d\n",size);
-	uint32 startAddress =(uint32)nextFit(size);
-	if(!startAddress){
-		return NULL;	//there no enough space
+
+	if(isKHpageEmpty){
+		initializaKernelHeapPages();//initialize kernel heap pages
 	}
-	uint32 tmpstart = startAddress;
-	struct Frame_Info *ptr_frame_info=NULL;
-	for(uint32 tmpSize =0;tmpSize<size ;tmpSize+=PAGE_SIZE){
+	size = ROUNDUP(size, PAGE_SIZE);
+	uint32 startAddress = (uint32)nextFit(size);
+	if (!startAddress){
+		return 0;	//there is no enough space
+	}
+	uint32 tempStartAddress = startAddress;
+	struct Frame_Info *ptr_frame_info ;
+	int kernelHeapPageIndex;
+	int numberOfPages=size/PAGE_SIZE;
+	while(numberOfPages--){
+		ptr_frame_info=0;
 		allocate_frame(&ptr_frame_info);
-		map_frame(ptr_page_directory, ptr_frame_info, (void*)tmpstart, PERM_PRESENT | PERM_WRITEABLE);
-		kernalHeapPages[(tmpstart - KERNEL_HEAP_START) / PAGE_SIZE].startAddress = startAddress;
-		kernalHeapPages[(tmpstart - KERNEL_HEAP_START) / PAGE_SIZE].size = size;
-		tmpstart += PAGE_SIZE;
+		map_frame(ptr_page_directory, ptr_frame_info, (void*)tempStartAddress, PERM_PRESENT | PERM_WRITEABLE);
+		kernelHeapPageIndex=(tempStartAddress - KERNEL_HEAP_START) / PAGE_SIZE;
+		kernelHeapPages[kernelHeapPageIndex].startAddress = startAddress;
+		kernelHeapPages[kernelHeapPageIndex].isEmpty=0;
+		tempStartAddress += PAGE_SIZE;
 	}
-	kernalHeapFirstFreeVirtualAddress = tmpstart;
+	lastAllocatedKHpage = startAddress + PAGE_SIZE * (size/PAGE_SIZE);
 	return (void*)startAddress;
-	/*End of NEXTFIT strategy*/
-	//===================================================================================================
-
-	//TODO: [PROJECT 2022 - BONUS1] Implement a Kernel allocation strategy
-	// Instead of the Next allocation/deallocation, implement
-	// BEST FIT strategy
-	// use "isKHeapPlacementStrategyBESTFIT() ..."
-	// and "isKHeapPlacementStrategyNEXTFIT() ..."
-	//functions to check the current strategy
-	//change this "return" according to your answer
-	return NULL;
 }
-
 void kfree(void* virtual_address)
 {
 	//TODO: [PROJECT 2022 - [2] Kernel Heap] kfree()
 	// Write your code here, remove the panic and write your code
-	panic("kfree() is not implemented yet...!!");
+//	panic("kfree() is not implemented yet...!!");
 
+	uint32 Start = (uint32)virtual_address;
+	while(Start<KERNEL_HEAP_MAX){
+		uint32 heapPageIndex=(Start -KERNEL_HEAP_START )/ PAGE_SIZE;
+		if(kernelHeapPages[heapPageIndex].isEmpty == 0
+				&& kernelHeapPages[heapPageIndex].startAddress==(uint32)virtual_address){
+			unmap_frame(ptr_page_directory, (void*)Start);
+			kernelHeapPages[heapPageIndex].startAddress = Start;
+			kernelHeapPages[heapPageIndex].isEmpty=1;
+			Start+=PAGE_SIZE;
+		}
+		else return;
+	}
 	//you need to get the size of the given allocation using its address
 	//refer to the project presentation and documentation for details
 
@@ -69,45 +117,38 @@ unsigned int kheap_virtual_address(unsigned int physical_address)
 {
 	//TODO: [PROJECT 2022 - [3] Kernel Heap] kheap_virtual_address()
 	// Write your code here, remove the panic and write your code
-	panic("kheap_virtual_address() is not implemented yet...!!");
+//	panic("kheap_virtual_address() is not implemented yet...!!");
 
 	//return the virtual address corresponding to given physical_address
 	//refer to the project presentation and documentation for details
 
 	//change this "return" according to your answer
-
+	struct Frame_Info* frameInfo ;
+	uint32* ptr_page_table;
+	for(uint32 i = KERNEL_HEAP_START ; i<=lastAllocatedKHpage ; i+=PAGE_SIZE){
+		frameInfo= NULL;
+		frameInfo = get_frame_info(ptr_page_directory, (void*)i, &ptr_page_table);
+		if(frameInfo != NULL && to_physical_address(frameInfo)==physical_address){
+			return i;
+		}
+	}
 	return 0;
 }
-
 unsigned int kheap_physical_address(unsigned int virtual_address)
 {
 	//TODO: [PROJECT 2022 - [4] Kernel Heap] kheap_physical_address()
 	// Write your code here, remove the panic and write your code
-	panic("kheap_physical_address() is not implemented yet...!!");
+//	panic("kheap_physical_address() is not implemented yet...!!");
 
 	//return the physical address corresponding to given virtual_address
 	//refer to the project presentation and documentation for details
-
 	//change this "return" according to your answer
-	return 0;
-}
 
-void *nextFit(uint32 size){
-//	cprintf("You are testing the next fit\n");
-	uint32 startAddress = kernalHeapFirstFreeVirtualAddress;
-	uint32 freeSize = 0;
-	uint32 End = kernalHeapFirstFreeVirtualAddress;
-	for(startAddress+=PAGE_SIZE ; startAddress< KERNEL_HEAP_MAX;startAddress+=PAGE_SIZE){
-		if (kernalHeapPages[(startAddress - KERNEL_HEAP_START) / PAGE_SIZE].size == 0){
-			freeSize += PAGE_SIZE;
-			if (freeSize == size){
-				startAddress -= size;
-				break;
-			}
-		}
+	uint32* pageTableVA = NULL;
+	get_page_table(ptr_page_directory, (void*)virtual_address, &pageTableVA);
+	if(pageTableVA != NULL){
+		//physical address= frame number * page size
+		return (pageTableVA[PTX(virtual_address)]>>12) * PAGE_SIZE;
 	}
-	if (freeSize != size){
-		return 0;
-	}
-	return (void*)startAddress;
+	return 0;
 }
