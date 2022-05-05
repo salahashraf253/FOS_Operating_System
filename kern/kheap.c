@@ -27,7 +27,7 @@ void *getStartAddress(uint32 start,uint32 end,uint32 size){
 			freeSize += PAGE_SIZE;
 			if (freeSize == size){
 				start = (start+PAGE_SIZE)-size;
-				break;
+				return (void*) start;
 			}
 		}
 		else{
@@ -35,10 +35,7 @@ void *getStartAddress(uint32 start,uint32 end,uint32 size){
 		}
 		start += PAGE_SIZE;
 	}
-	if(freeSize!=size){
-		return 0;
-	}
-	return (void*)start;
+	return 0;
 }
 void *nextFit(uint32 size){
 	//loop from the lastAllocated Kernel heap page to kernel heap max
@@ -53,7 +50,59 @@ void *nextFit(uint32 size){
 	}
 	return 0;	//there is no enough space in the heap
 }
-
+struct Location{
+	uint32 startAddress;
+	uint32 endAddress;
+	int freeFrames;
+};
+void *bestFit(uint32 size){
+	uint32 freeSize=0;
+	struct Location bestLocation;
+	bestLocation.freeFrames=(KERNEL_HEAP_MAX - KERNEL_HEAP_START )/ PAGE_SIZE+ 1;
+	bestLocation.startAddress=0;
+	bestLocation.endAddress=0;
+	int freeFrames=0;
+	struct Location block;
+	block.freeFrames=-1;
+	block.startAddress=0;
+	block.endAddress=0;
+	bool inElse=0;
+	int targetFrames=size/PAGE_SIZE;
+	cprintf("Target frames:%d\n",targetFrames);
+	uint32 start=KERNEL_HEAP_START;
+	while(start<KERNEL_HEAP_MAX){
+		if (kernelHeapPages[(start - KERNEL_HEAP_START) / PAGE_SIZE].isEmpty){
+			if(block.freeFrames==-1){
+				block.startAddress=start;
+				block.freeFrames=0;
+			}
+			block.freeFrames++;
+		}
+		else{
+			if(block.freeFrames >= targetFrames && bestLocation.freeFrames > block.freeFrames){
+				bestLocation.freeFrames=block.freeFrames;
+				bestLocation.startAddress=block.startAddress;
+				bestLocation.endAddress=start;
+			}
+			block.freeFrames=-1;
+		}
+		start += PAGE_SIZE;
+	}
+	if(block.freeFrames >= targetFrames && bestLocation.freeFrames > block.freeFrames){
+		bestLocation.freeFrames=block.freeFrames;
+		bestLocation.startAddress=block.startAddress;
+		bestLocation.endAddress=start;
+	}
+	if(	block.freeFrames < targetFrames){
+		return 0;
+	}
+	uint32 retAddress=bestLocation.startAddress;
+//	while(targetFrames--){
+//		retAddress+=PAGE_SIZE;
+//	}
+//	return (void*)(retAddress-size);
+	return (void*)(bestLocation.startAddress +(PAGE_SIZE *targetFrames)) - size ;
+}
 void* kmalloc(unsigned int size)
 {
 //	cprintf("Hello in Kmalloc\n");
@@ -65,13 +114,24 @@ void* kmalloc(unsigned int size)
 	//NOTE: Allocation using NEXTFIT strategy
 	//NOTE: All kernel heap allocations are multiples of PAGE_SIZE (4KB)
 	//refer to the project presentation and documentation for details
-
+	size = ROUNDUP(size, PAGE_SIZE);
+	uint32 startAddress=0;
 	if(isKHpageEmpty){
 		initializaKernelHeapPages();//initialize kernel heap pages
 	}
-	size = ROUNDUP(size, PAGE_SIZE);
-	uint32 startAddress = (uint32)nextFit(size);
+	if(isKHeapPlacementStrategyNEXTFIT()){
+		//kmalloc with next fit
+		 startAddress = (uint32)nextFit(size);
+	}
+	//kmalloc with best fit
+	else{
+		cprintf("Run with Best fit\n");
+		startAddress = (uint32)bestFit(size);
+	}
+
+//	cprintf("Start Address: %x\n",startAddress);
 	if (!startAddress){
+		cprintf("Successful kmalloc with no space \n");
 		return 0;	//there is no enough space
 	}
 	uint32 tempStartAddress = startAddress;
@@ -88,6 +148,7 @@ void* kmalloc(unsigned int size)
 		tempStartAddress += PAGE_SIZE;
 	}
 	lastAllocatedKHpage = startAddress + PAGE_SIZE * (size/PAGE_SIZE);
+	cprintf("Successful kmalloc with Start Address: %x\n",startAddress);
 	return (void*)startAddress;
 }
 void kfree(void* virtual_address)
