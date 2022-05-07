@@ -444,18 +444,41 @@ void table_fault_handler(struct Env * curenv, uint32 fault_va)
 	}
 
 }
-uint32 ClockLastInd=0;
-uint32 getVictimIndex(bool try1, uint32 start,uint32 end){
-	for(uint32 i= start;i<=end;i++){
+uint32 lastClockIndex=0;
+void freePermUsed(uint32 start,uint32 end){
+	if(start<0 || end <0 || end >=curenv->page_WS_max_size ){
+//		cprintf("Invalid index\n");
+		return ;
+	}
+	for(int i=start;i<=end;i++){
 		uint32 VA = curenv->ptr_pageWorkingSet[i].virtual_address;
-//		uint32 VA = env_page_ws_get_virtual_address(curenv,curenv->page_last_WS_index);
-		uint32 pagePerm = pt_get_page_permissions(curenv, VA);
+		uint32 Perms = pt_get_page_permissions(curenv, VA);
+//		cprintf("BEFORE Free PERM\t");
+//		cprintf("page working set index: %d\t",i);
+//		cprintf("USER in FREE PERM: %d\t",(Perms & PERM_USED));
+//		cprintf("PERM_MODIFIED in FREE PERM: %d\n",(Perms & PERM_MODIFIED));
+//		pt_set_page_permissions(curenv, VA, 0, PERM_USED);
+		Perms = pt_get_page_permissions(curenv, VA);
+//		cprintf("AFTER Free PERM\t");
+//		cprintf("page working set index: %d\t",i);
+//		cprintf("USER in FREE PERM: %d\t",(Perms & PERM_USED));
+//		cprintf("PERM_MODIFIED in FREE PERM: %d\n",(Perms & PERM_MODIFIED));
+	}
+}
+uint32 getVictimIndex(bool try1, uint32 start,uint32 end){
+	if(start<0 || end <0 || end >=curenv->page_WS_max_size ){
+//		cprintf("Invalid index\n");
+		return -1;
+	}
+	for(uint32 i= start;i<=end;i++){
+		uint32 virtualAddress = curenv->ptr_pageWorkingSet[i].virtual_address;
+		uint32 pagePerm = pt_get_page_permissions(curenv, virtualAddress);
 		if(try1){
 			cprintf("page working set index: %d\t",i);
 			cprintf("USER in try 1: %d\t",(pagePerm & PERM_USED));
 			cprintf("PERM_MODIFIED in try 1: %d\n",(pagePerm & PERM_MODIFIED));
 			if ((pagePerm & PERM_USED)== 0 && (pagePerm & PERM_MODIFIED) ==0){
-				ClockLastInd = i+1;
+				lastClockIndex = i+1;
 				cprintf("Return of try1: %d..........................................\n",i);
 				return i;
 			}
@@ -466,82 +489,15 @@ uint32 getVictimIndex(bool try1, uint32 start,uint32 end){
 			cprintf("PERM_MODIFIED in try 2: %d\n",(pagePerm & PERM_MODIFIED));
 //			if ( (Perms & PERM_USED)== 0 ){
 			if ( (pagePerm & PERM_USED)== 0 && (pagePerm & PERM_MODIFIED) !=0 ){
-				ClockLastInd = i+1;
+				lastClockIndex = i+1;
 				cprintf("Return of try2: %d..........................................\n",i);
 				return i;
 			}
-			pt_set_page_permissions(curenv, VA, 0, PERM_USED);
-//			curenv->table_last_WS_index=curenv->table_last_WS_index+1;
-//			curenv->table_last_WS_index%=curenv->page_WS_max_size;
+			pt_set_page_permissions(curenv, virtualAddress, 0, PERM_USED);
 		}
 	}
 	return -1;
 }
-uint32 modifiedClock(struct Env *curenv){
-	uint32 ret=-1;
-//	ClockLastInd %=curenv->page_WS_max_size;
-	while (1){
-								//try1
-		ret=getVictimIndex(1, ClockLastInd , curenv->page_WS_max_size-1 );
-		if(ret==-1){
-			ret=getVictimIndex(1,0, ClockLastInd );
-		}
-		else if(ret!=-1){
-			return ret;
-		}
-								//try2
-		ret=getVictimIndex(0, ClockLastInd , curenv->page_WS_max_size-1 );
-		if(ret==-1){
-			ret=getVictimIndex(0,0, ClockLastInd );
-		}
-		else if(ret!=-1){
-			return ret;
-		}
-	}
-}
-/*REPLACEMENT*/
-void pageReplacement(struct Env *curenv, uint32 fault_va, uint32 victim){
-	struct Frame_Info *ptr_frame_info;
-	uint32 *ptr_page_table = NULL;
-	ptr_frame_info = get_frame_info(curenv->env_page_directory, (void*)curenv->ptr_pageWorkingSet[victim].virtual_address, &ptr_page_table);
-	uint32 va = curenv->ptr_pageWorkingSet[victim].virtual_address;
-	uint32 victimPagePerm = pt_get_page_permissions(curenv, va);	//get victim page permissions
-	if ((victimPagePerm & PERM_MODIFIED)){
-		//the victim page is modified
-		pf_update_env_page(curenv, (void*)va, ptr_frame_info);	//update the victim page in page file
-	}
-	unmap_frame(curenv->env_page_directory, (void*)va);		//unmap the victim page
-	env_page_ws_clear_entry(curenv, victim);		//reflects the changes in the page working set
-}
-/*PLACEMENT*/
-void pagePlacement(struct Env *curenv, uint32 fault_va, uint32 Victim){
-	struct Frame_Info *faultedPageFrameInfo = NULL;
-	if (allocate_frame(&faultedPageFrameInfo) == E_NO_MEM){	//allocated frame for faulted page
-		panic("No memory for page in memory");
-	}
-	//map a frame for faulted page
-	map_frame(curenv->env_page_directory, faultedPageFrameInfo, (void*)fault_va, PERM_PRESENT | PERM_USER | PERM_WRITEABLE);
-	int returnOfReadEnvPage = pf_read_env_page(curenv, (void*)fault_va);
-	if (returnOfReadEnvPage == E_PAGE_NOT_EXIST_IN_PF){
-		if (fault_va >= USTACKBOTTOM && fault_va < USTACKTOP){
-			int returnOfEmptyEnvPage=pf_add_empty_env_page(curenv, fault_va, 0);
-			if (returnOfEmptyEnvPage == E_NO_PAGE_FILE_SPACE){
-				panic("ERROR: No enough virtual space on the page file");
-			}
-		}
-		else {
-			 panic("Invalid address");
-		}
-	}
-	curenv->page_last_WS_index = Victim;
-
-	env_page_ws_set_entry(curenv, curenv->page_last_WS_index, fault_va);
-	if (++(curenv->page_last_WS_index) == curenv->page_WS_max_size){
-		curenv->page_last_WS_index = 0;
-	}
-	ClockLastInd=curenv->page_last_WS_index;
-}
-
 /*
 Modified Clock​
 Uses “use bit” & “modified bit”​
@@ -558,6 +514,82 @@ Uses “use bit” & “modified bit”​
 
 BEST candidate: (0, 0)
 */
+uint32 modifiedClock(struct Env *curenv){
+	uint32 ret=-1;
+//	ClockLastInd %=curenv->page_WS_max_size;
+	while (1){
+//		cprintf("Clock last index: %d, MAX index: %d\n",ClockLastInd,curenv->page_WS_max_size -1);
+		freePermUsed(lastClockIndex,curenv->page_WS_max_size -1);
+		freePermUsed(0,lastClockIndex -1);
+								//try1
+		ret=getVictimIndex(1, lastClockIndex , curenv->page_WS_max_size -1);
+//		cprintf("Try1.1: %d\n",ret);
+		if(ret == -1){
+			ret=getVictimIndex(1,0, lastClockIndex-1 );
+//			cprintf("Try1.2: %d\n",ret);
+		}
+		if(ret!=-1){
+//			cprintf("Return in modified clock is: %d\n",ret);
+			return ret;
+			break;
+		}
+								//try2
+		ret=getVictimIndex(0, lastClockIndex , curenv->page_WS_max_size -1);
+//		cprintf("Try2.1: %d\n",ret);
+		if(ret==-1){
+			ret=getVictimIndex(0,0, lastClockIndex -1);
+//			cprintf("Try2.2: %d\n",ret);
+		}
+		if(ret!=-1){
+//			cprintf("Return in modified clock is: %d\n",ret);
+			return ret;
+			break;
+		}
+	}
+}
+/*REPLACEMENT*/
+void pageReplacement(struct Env *curenv, uint32 fault_va, uint32 victim){
+	struct Frame_Info *ptr_frame_info;
+	uint32 *ptr_page_table = NULL;
+	ptr_frame_info = get_frame_info(curenv->env_page_directory, (void*)curenv->ptr_pageWorkingSet[victim].virtual_address, &ptr_page_table);
+	uint32 va = curenv->ptr_pageWorkingSet[victim].virtual_address;
+	uint32 victimPagePerm = pt_get_page_permissions(curenv, va);	//get victim page permissions
+	if ((victimPagePerm & PERM_MODIFIED) ){
+		//the victim page is modified
+		pf_update_env_page(curenv, (void*)va, ptr_frame_info);	//update the victim page in page file
+	}
+	unmap_frame(curenv->env_page_directory, (void*)va);		//unmap the victim page
+	env_page_ws_clear_entry(curenv, victim);		//reflects the changes in the page working set
+	curenv->page_last_WS_index= (curenv->page_last_WS_index+1) % curenv->page_WS_max_size;
+	lastClockIndex=curenv->page_last_WS_index;
+}
+/*PLACEMENT*/
+void pagePlacement(struct Env *curenv, uint32 fault_va, uint32 victim){
+	struct Frame_Info *faultedPageFrameInfo = NULL;
+	if (allocate_frame(&faultedPageFrameInfo) == E_NO_MEM){	//allocated frame for faulted page
+		panic("No memory for page in memory");
+	}
+	//map a frame for faulted page
+	map_frame(curenv->env_page_directory, faultedPageFrameInfo, (void*)fault_va, PERM_PRESENT | PERM_USER | PERM_WRITEABLE);
+	int returnOfReadEnvPage = pf_read_env_page(curenv, (void*)fault_va);/*Read an environment page from the page file to the main memory*/
+	if (returnOfReadEnvPage == E_PAGE_NOT_EXIST_IN_PF){
+		if (fault_va >= USTACKBOTTOM && fault_va < USTACKTOP){
+			int returnOfEmptyEnvPage=pf_add_empty_env_page(curenv, fault_va, 0);/*add a new environment page to the page file */
+			if (returnOfEmptyEnvPage == E_NO_PAGE_FILE_SPACE){
+				panic("ERROR: No enough virtual space on the page file");
+			}
+		}
+		else {
+			 panic("Invalid address");
+		}
+	}
+	curenv->page_last_WS_index = victim;
+	env_page_ws_set_entry(curenv, curenv->page_last_WS_index, fault_va);
+	curenv->page_last_WS_index= (curenv->page_last_WS_index+1) % curenv->page_WS_max_size;
+	lastClockIndex=curenv->page_last_WS_index;
+}
+
+
 
 //Handle the page fault
 void page_fault_handler(struct Env * curenv, uint32 fault_va)
@@ -567,28 +599,27 @@ void page_fault_handler(struct Env * curenv, uint32 fault_va)
 	//panic("page_fault_handler() is not implemented yet...!!");
 	//refer to the project presentation and documentation for details
 
+	cprintf("Hello in PAGE FAULT HANDLER\n");
+
 	//	cprintf("fault_va before round DOWN: %d\n",fault_va);
 	fault_va = ROUNDDOWN(fault_va, PAGE_SIZE);
 //	cprintf("fault_va after round DOWN: %d\n",fault_va);
-	cprintf("Hello in PAGE FAULT HANDLER\n");
+
 	uint32 victim;
 	if (env_page_ws_get_size(curenv) >= curenv->page_WS_max_size){
 		if(isPageReplacmentAlgorithmModifiedCLOCK()){
 			//Apply MODIFIED CLOCK algorithm to choose the victim
-			cprintf("HEllo in MOdified cLOCk===========================================\n");
+//			cprintf("HEllo in MOdified cLOCk===========================================\n");
 			victim = modifiedClock(curenv);
 			pageReplacement(curenv, fault_va, victim);
 		}
-		else cprintf("It is not modified clock\n");
+		else cprintf("Page replacement is not Modified Clock\n");
 	}
 	else {
 		cprintf("There is free space in the env pages...........................................\n");
 		victim = curenv->page_last_WS_index;
 	}
 	pagePlacement(curenv, fault_va, victim);
-
-
-
 
 	//TODO: [PROJECT 2022 - BONUS4] Change WS Size according to Program Priority‌
 
