@@ -465,6 +465,14 @@ void freePermUsed(uint32 start,uint32 end){
 //		cprintf("PERM_MODIFIED in FREE PERM: %d\n",(Perms & PERM_MODIFIED));
 	}
 }
+bool isUsed(uint32 pagePerm){
+	/*if the page is used return 1 else return 0*/
+	return (pagePerm & PERM_USED) != 0;
+}
+bool isModified(uint32 pagePerm){
+	/*if the page is modified return 1 else return 0*/
+	return (pagePerm & PERM_MODIFIED) != 0;
+}
 uint32 getVictimIndex(bool try1, uint32 start,uint32 end){
 	if(start<0 || end <0 || end >=curenv->page_WS_max_size ){
 //		cprintf("Invalid index\n");
@@ -473,27 +481,28 @@ uint32 getVictimIndex(bool try1, uint32 start,uint32 end){
 	for(uint32 i= start;i<=end;i++){
 		uint32 virtualAddress = curenv->ptr_pageWorkingSet[i].virtual_address;
 		uint32 pagePerm = pt_get_page_permissions(curenv, virtualAddress);
-		if(try1){
-			cprintf("page working set index: %d\t",i);
-			cprintf("USER in try 1: %d\t",(pagePerm & PERM_USED));
-			cprintf("PERM_MODIFIED in try 1: %d\n",(pagePerm & PERM_MODIFIED));
-			if ((pagePerm & PERM_USED)== 0 && (pagePerm & PERM_MODIFIED) ==0){
+		if(try1){	//try1
+			/*Search for used bit = 0 and modified bit = 0 */
+//			cprintf("page working set index: %d\t",i);
+//			cprintf("USER in try 1: %d\t",(pagePerm & PERM_USED));
+//			cprintf("PERM_MODIFIED in try 1: %d\n",(pagePerm & PERM_MODIFIED));
+			if ( !isUsed(pagePerm) && !isModified(pagePerm)){
 				lastClockIndex = i+1;
-				cprintf("Return of try1: %d..........................................\n",i);
+//				cprintf("Return of try1: %d..........................................\n",i);
 				return i;
 			}
 		}
-		else{
-			cprintf("page working set index: %d\t",i);
-			cprintf("USER in try 2: %d\t",(pagePerm & PERM_USED));
-			cprintf("PERM_MODIFIED in try 2: %d\n",(pagePerm & PERM_MODIFIED));
-//			if ( (Perms & PERM_USED)== 0 ){
-			if ( (pagePerm & PERM_USED)== 0 && (pagePerm & PERM_MODIFIED) !=0 ){
+		else{	//try2
+			/*Search for used bit = 0 and modified bit = 1 */
+//			cprintf("page working set index: %d\t",i);
+//			cprintf("USER in try 2: %d\t",(pagePerm & PERM_USED));
+//			cprintf("PERM_MODIFIED in try 2: %d\n",(pagePerm & PERM_MODIFIED));
+			if ( !isUsed(pagePerm) && isModified(pagePerm) ){
 				lastClockIndex = i+1;
-				cprintf("Return of try2: %d..........................................\n",i);
+//				cprintf("Return of try2: %d..........................................\n",i);
 				return i;
 			}
-			pt_set_page_permissions(curenv, virtualAddress, 0, PERM_USED);
+			pt_set_page_permissions(curenv, virtualAddress, 0, PERM_USED);/*set the used permissions to zero*/
 		}
 	}
 	return -1;
@@ -516,7 +525,6 @@ BEST candidate: (0, 0)
 */
 uint32 modifiedClock(struct Env *curenv){
 	uint32 ret=-1;
-//	ClockLastInd %=curenv->page_WS_max_size;
 	while (1){
 //		cprintf("Clock last index: %d, MAX index: %d\n",ClockLastInd,curenv->page_WS_max_size -1);
 		freePermUsed(lastClockIndex,curenv->page_WS_max_size -1);
@@ -531,7 +539,6 @@ uint32 modifiedClock(struct Env *curenv){
 		if(ret!=-1){
 //			cprintf("Return in modified clock is: %d\n",ret);
 			return ret;
-			break;
 		}
 								//try2
 		ret=getVictimIndex(0, lastClockIndex , curenv->page_WS_max_size -1);
@@ -543,19 +550,19 @@ uint32 modifiedClock(struct Env *curenv){
 		if(ret!=-1){
 //			cprintf("Return in modified clock is: %d\n",ret);
 			return ret;
-			break;
 		}
 	}
 }
 /*REPLACEMENT*/
 void pageReplacement(struct Env *curenv, uint32 fault_va, uint32 victim){
-	struct Frame_Info *ptr_frame_info;
-	uint32 *ptr_page_table = NULL;
-	ptr_frame_info = get_frame_info(curenv->env_page_directory, (void*)curenv->ptr_pageWorkingSet[victim].virtual_address, &ptr_page_table);
-	uint32 va = curenv->ptr_pageWorkingSet[victim].virtual_address;
-	uint32 victimPagePerm = pt_get_page_permissions(curenv, va);	//get victim page permissions
-	if ((victimPagePerm & PERM_MODIFIED) ){
+	uint32 va = (uint32)curenv->ptr_pageWorkingSet[victim].virtual_address;
+	uint32 victimPagePerm =(uint32) pt_get_page_permissions(curenv, va);	//get victim page permissions
+	if ( isModified(victimPagePerm)){
 		//the victim page is modified
+		struct Frame_Info *ptr_frame_info;
+		uint32 *ptr_page_table = NULL;
+		ptr_frame_info = get_frame_info(curenv->env_page_directory,
+					(void*)curenv->ptr_pageWorkingSet[victim].virtual_address, &ptr_page_table);
 		pf_update_env_page(curenv, (void*)va, ptr_frame_info);	//update the victim page in page file
 	}
 	unmap_frame(curenv->env_page_directory, (void*)va);		//unmap the victim page
@@ -589,8 +596,6 @@ void pagePlacement(struct Env *curenv, uint32 fault_va, uint32 victim){
 	lastClockIndex=curenv->page_last_WS_index;
 }
 
-
-
 //Handle the page fault
 void page_fault_handler(struct Env * curenv, uint32 fault_va)
 {
@@ -600,7 +605,6 @@ void page_fault_handler(struct Env * curenv, uint32 fault_va)
 	//refer to the project presentation and documentation for details
 
 	cprintf("Hello in PAGE FAULT HANDLER\n");
-
 	//	cprintf("fault_va before round DOWN: %d\n",fault_va);
 	fault_va = ROUNDDOWN(fault_va, PAGE_SIZE);
 //	cprintf("fault_va after round DOWN: %d\n",fault_va);
@@ -609,7 +613,6 @@ void page_fault_handler(struct Env * curenv, uint32 fault_va)
 	if (env_page_ws_get_size(curenv) >= curenv->page_WS_max_size){
 		if(isPageReplacmentAlgorithmModifiedCLOCK()){
 			//Apply MODIFIED CLOCK algorithm to choose the victim
-//			cprintf("HEllo in MOdified cLOCk===========================================\n");
 			victim = modifiedClock(curenv);
 			pageReplacement(curenv, fault_va, victim);
 		}
