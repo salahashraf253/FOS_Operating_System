@@ -445,12 +445,15 @@ void table_fault_handler(struct Env * curenv, uint32 fault_va)
 
 }
 uint32 lastClockIndex=0;
+bool isValidRange(uint32 start,uint32 end){
+	return start<0 || end <0 || end >curenv->page_WS_max_size ;
+}
 void freePermUsed(uint32 start,uint32 end){
-	if(start<0 || end <0 || end >=curenv->page_WS_max_size ){
+	if(isValidRange(start,end)){
 //		cprintf("Invalid index\n");
 		return ;
 	}
-	for(int i=start;i<=end;i++){
+	for(int i=start;i<end;i++){
 		uint32 VA = curenv->ptr_pageWorkingSet[i].virtual_address;
 		uint32 Perms = pt_get_page_permissions(curenv, VA);
 //		cprintf("BEFORE Free PERM\t");
@@ -474,11 +477,11 @@ bool isModified(uint32 pagePerm){
 	return (pagePerm & PERM_MODIFIED) != 0;
 }
 uint32 getVictimIndex(bool try1, uint32 start,uint32 end){
-	if(start<0 || end <0 || end >=curenv->page_WS_max_size ){
+	if(isValidRange(start,end)){
 //		cprintf("Invalid index\n");
 		return -1;
 	}
-	for(uint32 i= start;i<=end;i++){
+	for(uint32 i= start;i<end;i++){
 		uint32 virtualAddress = curenv->ptr_pageWorkingSet[i].virtual_address;
 		uint32 pagePerm = pt_get_page_permissions(curenv, virtualAddress);
 		if(try1){	//try1
@@ -527,13 +530,13 @@ uint32 modifiedClock(struct Env *curenv){
 	uint32 ret=-1;
 	while (1){
 //		cprintf("Clock last index: %d, MAX index: %d\n",ClockLastInd,curenv->page_WS_max_size -1);
-		freePermUsed(lastClockIndex,curenv->page_WS_max_size -1);
-		freePermUsed(0,lastClockIndex -1);
+		freePermUsed(lastClockIndex,curenv->page_WS_max_size);
+		freePermUsed(0,lastClockIndex);
 								//try1
-		ret=getVictimIndex(1, lastClockIndex , curenv->page_WS_max_size -1);
+		ret=getVictimIndex(1, lastClockIndex , curenv->page_WS_max_size);
 //		cprintf("Try1.1: %d\n",ret);
 		if(ret == -1){
-			ret=getVictimIndex(1,0, lastClockIndex-1 );
+			ret=getVictimIndex(1,0, lastClockIndex);
 //			cprintf("Try1.2: %d\n",ret);
 		}
 		if(ret!=-1){
@@ -541,10 +544,10 @@ uint32 modifiedClock(struct Env *curenv){
 			return ret;
 		}
 								//try2
-		ret=getVictimIndex(0, lastClockIndex , curenv->page_WS_max_size -1);
+		ret=getVictimIndex(0, lastClockIndex , curenv->page_WS_max_size);
 //		cprintf("Try2.1: %d\n",ret);
 		if(ret==-1){
-			ret=getVictimIndex(0,0, lastClockIndex -1);
+			ret=getVictimIndex(0,0, lastClockIndex);
 //			cprintf("Try2.2: %d\n",ret);
 		}
 		if(ret!=-1){
