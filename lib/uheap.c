@@ -17,12 +17,115 @@
 //==================================================================================//
 //============================ REQUIRED FUNCTIONS ==================================//
 //==================================================================================//
-
+#define userHeapMaxPages (USER_HEAP_MAX - USER_HEAP_START) / PAGE_SIZE
+struct KernelHeapPages{
+	uint32 startAddress;
+	bool isEmpty;
+	uint32 size;
+}kernelHeapPages[userHeapMaxPages];
+uint32 lastAllocatedUHpage = USER_HEAP_START;
+struct Location{
+	uint32 startAddress;
+	uint32 endAddress;
+	int freeFrames;
+};
+bool isUserHeapEmpty=1;
+void initializaKernelHeapPages(){
+	cprintf("Hello in malloc in user heap\n");
+	int userHeapPageIndex;
+	for(int i=USER_HEAP_START;i<USER_HEAP_MAX;i+=PAGE_SIZE){
+		userHeapPageIndex=(i-USER_HEAP_START)/PAGE_SIZE;
+		kernelHeapPages[userHeapPageIndex].startAddress = i;
+		kernelHeapPages[userHeapPageIndex].isEmpty=1;
+		kernelHeapPages[userHeapPageIndex].size=0;
+	}
+	//return it false to keep the User heap pages the same without zeros
+	isUserHeapEmpty=0;
+}
+void *getStartAddress(uint32 start,uint32 end,uint32 size){
+	uint32 freeSize=0;
+	while(start<end){
+		if (kernelHeapPages[(start - USER_HEAP_START) / PAGE_SIZE].isEmpty){
+			freeSize += PAGE_SIZE;
+			if (freeSize == size){
+				start = (start+PAGE_SIZE)-size;
+				return (void*) start;
+			}
+		}
+		else{
+			freeSize = 0;
+		}
+		start += PAGE_SIZE;
+	}
+	return 0;
+}
+void *nextFit(uint32 size){
+	//loop from the lastAllocated User heap page to kernel heap max
+	uint32 startAddress=(uint32)getStartAddress(lastAllocatedUHpage,USER_HEAP_MAX,size);
+	if(startAddress!=0){
+		return (void*)startAddress;
+	}
+	//loop from the Kernel heap start to last allocated User heap page
+	startAddress=(uint32)getStartAddress(USER_HEAP_START,lastAllocatedUHpage,size);
+	if(startAddress!=0){
+		return (void*)startAddress;
+	}
+	return 0;	//there is no enough space in the User Kernel
+}
+void *bestFit(uint32 size){
+	uint32 freeSize=0;
+	struct Location bestLocation;
+	bestLocation.freeFrames=(USER_HEAP_MAX - USER_HEAP_START )/ PAGE_SIZE+ 1;
+	bestLocation.startAddress=0;
+	bestLocation.endAddress=0;
+	int freeFrames=0;
+	struct Location block;
+	block.freeFrames=-1;
+	block.startAddress=0;
+	block.endAddress=0;
+	bool inElse=0;
+	int targetFrames=size/PAGE_SIZE;
+	cprintf("Target frames:%d\n",targetFrames);
+	uint32 start=USER_HEAP_START;
+	while(start<USER_HEAP_MAX){
+		if (kernelHeapPages[(start - USER_HEAP_START) / PAGE_SIZE].isEmpty){
+			if(block.freeFrames==-1){
+				block.startAddress=start;
+				block.freeFrames=0;
+			}
+			block.freeFrames++;
+		}
+		else{
+			if(block.freeFrames >= targetFrames && bestLocation.freeFrames > block.freeFrames){
+				bestLocation.freeFrames=block.freeFrames;
+				bestLocation.startAddress=block.startAddress;
+				bestLocation.endAddress=start;
+			}
+			block.freeFrames=-1;
+		}
+		start += PAGE_SIZE;
+	}
+	if(block.freeFrames >= targetFrames && bestLocation.freeFrames > block.freeFrames){
+		bestLocation.freeFrames=block.freeFrames;
+		bestLocation.startAddress=block.startAddress;
+		bestLocation.endAddress=start;
+	}
+	if(	block.freeFrames < targetFrames){
+		cprintf("no space : best fit\n");
+		return 0;
+	}
+	uint32 retAddress=bestLocation.startAddress;
+	cprintf("return of best fit  : %d",(bestLocation.startAddress +(PAGE_SIZE *targetFrames)) - size);
+	return  (void*)(bestLocation.startAddress +(PAGE_SIZE *targetFrames)) - size;
+//	return (void*)((bestLocation.startAddress +(PAGE_SIZE *targetFrames))) ;
+//	cprintf("return of best fit is : %x\n",bestLocation.startAddress+PAGE_SIZE);
+//	return (void*)((bestLocation.startAddress+PAGE_SIZE));
+}
 void* malloc(uint32 size)
 {
 	//TODO: [PROJECT 2022 - [9] User Heap malloc()] [User Side]
 	// Write your code here, remove the panic and write your code
-	panic("malloc() is not implemented yet...!!");
+	//panic("malloc() is not implemented yet...!!");
 
 	// Steps:
 	//	1) Implement NEXT FIT strategy to search the heap for suitable space
@@ -40,9 +143,38 @@ void* malloc(uint32 size)
 	//sys_isUHeapPlacementStrategyBESTFIT() for the bonus
 	//to check the current strategy
 
-	return NULL;
-}
+	if(isUserHeapEmpty){
+		initializaKernelHeapPages();
+	}
+	size=ROUNDUP(size,PAGE_SIZE);
+	uint32 start;
+	if(sys_isUHeapPlacementStrategyBESTFIT()){
+		/*to test using best fit write command: uhbestfit at the begining of run*/
+		cprintf("Malloc in user heap using best fit\n");
+		start=(uint32)bestFit(size);
+	}
+	else if(sys_isUHeapPlacementStrategyNEXTFIT()){
+		cprintf("Malloc in user heap using NEXT fit\n");
+		start=(uint32)nextFit(size);
+	}
+	if(!start){
+		cprintf("Successful malloc with no space \n");
+		return 0;
+	}
+	sys_allocateMem(start, size); /*3) Call sys_allocateMem to invoke the Kernel for allocation*/
+	uint32 tmpstart = start;
+	uint32 tmpsize = size;
+	while (tmpsize > 0){
+		kernelHeapPages[(tmpstart - USER_HEAP_START) / PAGE_SIZE].startAddress = start;
+		kernelHeapPages[(tmpstart - USER_HEAP_START) / PAGE_SIZE].isEmpty = 0;
+		kernelHeapPages[(tmpstart-USER_HEAP_START) / PAGE_SIZE].size=size;
+		tmpsize -= PAGE_SIZE;
+		tmpstart += PAGE_SIZE;
+	}
+	cprintf("return of malloc : %x\n",start);
+	return (void*)(start);
 
+}
 void* smalloc(char *sharedVarName, uint32 size, uint8 isWritable)
 {
 	panic("smalloc() is not required ..!!");
@@ -69,11 +201,22 @@ void free(void* virtual_address)
 {
 	//TODO: [PROJECT 2022 - [11] User Heap free()] [User Side]
 	// Write your code here, remove the panic and write your code
-	panic("free() is not implemented yet...!!");
+	//panic("free() is not implemented yet...!!");
 
 	//you shold get the size of the given allocation using its address
 	//you need to call sys_freeMem()
 	//refer to the project presentation and documentation for details
+	uint32 va = (uint32)virtual_address;
+	uint32 size = kernelHeapPages[((uint32)virtual_address - USER_HEAP_START) / PAGE_SIZE].size;
+	sys_freeMem(va, size);
+	uint32 userHeapPageIndex;
+	for(;size ; size-=PAGE_SIZE){
+		userHeapPageIndex=(va - USER_HEAP_START) / PAGE_SIZE;
+		kernelHeapPages[userHeapPageIndex].startAddress = va;
+		kernelHeapPages[userHeapPageIndex].size = 0;
+		kernelHeapPages[userHeapPageIndex].isEmpty = 1;
+		va += PAGE_SIZE;
+	}
 
 }
 
@@ -109,3 +252,4 @@ void *realloc(void *virtual_address, uint32 new_size)
 
 	return NULL;
 }
+
