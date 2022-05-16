@@ -164,13 +164,16 @@ void* malloc(uint32 size)
 	sys_allocateMem(start, size); /*3) Call sys_allocateMem to invoke the Kernel for allocation*/
 	uint32 tmpstart = start;
 	uint32 tmpsize = size;
+	uint32 userHeapPageIndex;
 	while (tmpsize > 0){
-		kernelHeapPages[(tmpstart - USER_HEAP_START) / PAGE_SIZE].startAddress = start;
-		kernelHeapPages[(tmpstart - USER_HEAP_START) / PAGE_SIZE].isEmpty = 0;
-		kernelHeapPages[(tmpstart-USER_HEAP_START) / PAGE_SIZE].size=size;
+		userHeapPageIndex=(tmpstart - USER_HEAP_START) / PAGE_SIZE;
+		kernelHeapPages[userHeapPageIndex].startAddress = start;
+		kernelHeapPages[userHeapPageIndex].isEmpty = 0;
+		kernelHeapPages[userHeapPageIndex].size=size;
 		tmpsize -= PAGE_SIZE;
 		tmpstart += PAGE_SIZE;
 	}
+	lastAllocatedUHpage=start + PAGE_SIZE * (size/PAGE_SIZE);
 	cprintf("return of malloc : %x\n",start);
 	return (void*)(start);
 
