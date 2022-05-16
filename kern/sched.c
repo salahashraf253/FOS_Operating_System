@@ -99,24 +99,21 @@ void sched_init_MLFQ(uint8 numOfLevels, uint8 *quantumOfEachLevel)
 	//=========================================
 	//TODO: [PROJECT 2022 [7] CPU Scheduling MLFQ] Initialize MLFQ
 	// Write your code here, remove the panic and write your code
-	//panic("sched_init_MLFQ() is not implemented yet...!!");
+//	panic("sched_init_MLFQ() is not implemented yet...!!");
 
 	//[1] Create the ready queues and initialize them using init_queue()
 	//[2] Create the "quantums" array and initialize it by the given quantums in "quantumOfEachLevel[]"
 	//[3] Set the CPU quantum by the first level one
-
+//
 	cprintf("Hello in sched_init_MLFQ\n");
 	num_of_ready_queues = numOfLevels;
 	env_ready_queues = kmalloc(sizeof(struct Env_Queue)*numOfLevels); /*create the ready queues */
-	for (uint32 i = 0; i < numOfLevels; i++){
-		init_queue(&env_ready_queues[i]);	/*initialize them using init_queue()*/
-	}
 	quantums = kmalloc(sizeof(uint8)*numOfLevels);	/*create the "quantums" array */
 	for (uint32 i = 0; i < numOfLevels; i++){
-		quantums[i] = quantumOfEachLevel[i];	/*initialize it by the given quantums in "quantumOfEachLevel[]"*/
+		init_queue(&env_ready_queues[i]);		/*initialize them using init_queue()*/
+		quantums[i] = quantumOfEachLevel[i];	/*initialize it by the given quantum in "quantumOfEachLevel[]"*/
 	}
 	kclock_set_quantum(quantums[0]); /*Set the CPU quantum by the first level one*/
-
 }
 
 
@@ -145,31 +142,30 @@ void sched_init_MLFQ(uint8 numOfLevels, uint8 *quantumOfEachLevel)
 int indexToEnqueue=0;
 int getSelectedLevel(){
 	for(int i=0;i<num_of_ready_queues;i++){
-		if(queue_size(&env_ready_queues[i]) > 0){
+		if(queue_size(&env_ready_queues[i])){
 			return i;/*the next env is found*/
 		}
 	}
 	return -1;/*the next env is not found*/
 }
 void updateIndexToEnqueue(int *indexToEnqueue , int selectedLevel){
-	  if(selectedLevel < num_of_ready_queues - 1){
+	  if(selectedLevel+1 != num_of_ready_queues){
 		  *indexToEnqueue=selectedLevel+1;
 	  }
-	  else *indexToEnqueue=num_of_ready_queues-1;
 }
 struct Env* fos_scheduler_MLFQ()
 {
-//	cprintf("Hello in fos_scheduler_MLFQ\n");
+	cprintf("Hello in fos_scheduler_MLFQ\n");
     //TODO: [PROJECT 2022 [8] CPU Scheduling MLFQ] MLFQ Scheduler
     // Write your code here, remove the panic and write your code
-   // panic("fos_scheduler_MLFQ() is not implemented yet...!!");
+//    panic("fos_scheduler_MLFQ() is not implemented yet...!!");
 
     //Apply the MLFQ with the specified levels to pick up the next environment
     //Note: the "curenv" (if exist) should be placed in its correct queue
 
     //Steps:
     //======
-    //[1] If the current environment (curenv) exists, place it in the suitable queue
+//    [1] If the current environment (curenv) exists, place it in the suitable queue
       if(curenv!=NULL){
 //          sched_insert_ready(curenv);
           enqueue(&(env_ready_queues[indexToEnqueue]), curenv); /*place the curenv in the suitable queue*/
@@ -180,6 +176,7 @@ struct Env* fos_scheduler_MLFQ()
       	//							,remove the selected env from its queue and return it
       	//	  Else, return NULL
      int selectedLevel=getSelectedLevel();
+     cprintf("Selected level is: %d\n",selectedLevel);
      if(selectedLevel != -1){
     	 /*the next env is found*/
     	 struct Env* selectedEnv = dequeue(&env_ready_queues[selectedLevel]); /*remove the selected env from queue*/
