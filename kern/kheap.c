@@ -1,16 +1,19 @@
 #include <inc/memlayout.h>
 #include <kern/kheap.h>
 #include <kern/memory_manager.h>
+
 //2022: NOTE: All kernel heap allocations are multiples of PAGE_SIZE (4KB)
+#define maxKernelHeapPages ((KERNEL_HEAP_MAX - KERNEL_HEAP_START) / PAGE_SIZE) +1
 
 struct KernelHeapPages{
 	uint32 startAddress;
 	bool isEmpty;
-}kernelHeapPages[(KERNEL_HEAP_MAX - KERNEL_HEAP_START) / PAGE_SIZE];
+}kernelHeapPages[maxKernelHeapPages];
 uint32 lastAllocatedKHpage = KERNEL_HEAP_START;
 bool isKHpageEmpty = 1;
+const uint32 framePermission  = PERM_WRITEABLE | PERM_PRESENT;
 void initializaKernelHeapPages(){
-	cprintf("Hello in Kmalloc\n");
+//	cprintf("Hello in Kmalloc\n");
 	int heapPageIndex;
 	for(int i=KERNEL_HEAP_START;i<KERNEL_HEAP_MAX;i+=PAGE_SIZE){
 		heapPageIndex=(i-KERNEL_HEAP_START)/PAGE_SIZE;
@@ -21,18 +24,16 @@ void initializaKernelHeapPages(){
 	isKHpageEmpty=0;
 }
 void *getStartAddress(uint32 start,uint32 end,uint32 size){
-	uint32 freeSize=0;
+	uint32 emptyPages=0;
+	uint32 targetPages=size/PAGE_SIZE;
 	while(start<end){
 		if (kernelHeapPages[(start - KERNEL_HEAP_START) / PAGE_SIZE].isEmpty){
-			freeSize += PAGE_SIZE;
-			if (freeSize == size){
+			if (++emptyPages == targetPages){
 				start = (start+PAGE_SIZE)-size;
 				return (void*) start;
 			}
 		}
-		else{
-			freeSize = 0;
-		}
+		else emptyPages=0;
 		start += PAGE_SIZE;
 	}
 	return 0;
@@ -58,7 +59,7 @@ struct Location{
 void *bestFit(uint32 size){
 	uint32 freeSize=0;
 	struct Location bestLocation;
-	bestLocation.freeFrames=(KERNEL_HEAP_MAX - KERNEL_HEAP_START )/ PAGE_SIZE+ 1;
+	bestLocation.freeFrames=maxKernelHeapPages;
 	bestLocation.startAddress=0;
 	bestLocation.endAddress=0;
 	int freeFrames=0;
@@ -66,9 +67,8 @@ void *bestFit(uint32 size){
 	block.freeFrames=-1;
 	block.startAddress=0;
 	block.endAddress=0;
-	bool inElse=0;
 	int targetFrames=size/PAGE_SIZE;
-	cprintf("Target frames:%d\n",targetFrames);
+//	cprintf("Target frames:%d\n",targetFrames);
 	uint32 start=KERNEL_HEAP_START;
 	while(start<KERNEL_HEAP_MAX){
 		if (kernelHeapPages[(start - KERNEL_HEAP_START) / PAGE_SIZE].isEmpty){
@@ -80,32 +80,55 @@ void *bestFit(uint32 size){
 		}
 		else{
 			if(block.freeFrames >= targetFrames && bestLocation.freeFrames > block.freeFrames){
-				bestLocation.freeFrames=block.freeFrames;
-				bestLocation.startAddress=block.startAddress;
-				bestLocation.endAddress=start;
+				bestLocation=block;
 			}
 			block.freeFrames=-1;
 		}
 		start += PAGE_SIZE;
 	}
 	if(block.freeFrames >= targetFrames && bestLocation.freeFrames > block.freeFrames){
-		bestLocation.freeFrames=block.freeFrames;
-		bestLocation.startAddress=block.startAddress;
-		bestLocation.endAddress=start;
+		bestLocation=block;
 	}
-	if(	block.freeFrames < targetFrames){
-		return 0;
+	return (block.freeFrames < targetFrames)? 0:(void*)(bestLocation.startAddress +(PAGE_SIZE *targetFrames)) - size ;
+}
+void *worstFit(uint32 size){
+	uint32 freeSize=0;
+	struct Location worstLocation;
+	worstLocation.freeFrames=maxKernelHeapPages;
+	worstLocation.startAddress=0;
+	worstLocation.endAddress=0;
+	int freeFrames=0;
+	struct Location block;
+	block.freeFrames=-1;
+	block.startAddress=0;
+	block.endAddress=0;
+	int targetFrames=size/PAGE_SIZE;
+//	cprintf("Target frames:%d\n",targetFrames);
+	uint32 start=KERNEL_HEAP_START;
+	while(start<KERNEL_HEAP_MAX){
+		if (kernelHeapPages[(start - KERNEL_HEAP_START) / PAGE_SIZE].isEmpty){
+			if(block.freeFrames==-1){
+				block.startAddress=start;
+				block.freeFrames=0;
+			}
+			block.freeFrames++;
+		}
+		else{
+			if(!(block.freeFrames >= targetFrames &&
+					worstLocation.freeFrames > block.freeFrames)){
+				worstLocation=block;
+			}
+			block.freeFrames=-1;
+		}
+		start += PAGE_SIZE;
 	}
-	uint32 retAddress=bestLocation.startAddress;
-//	while(targetFrames--){
-//		retAddress+=PAGE_SIZE;
-//	}
-//	return (void*)(retAddress-size);
-	return (void*)(bestLocation.startAddress +(PAGE_SIZE *targetFrames)) - size ;
+	if(!(block.freeFrames >= targetFrames && worstLocation.freeFrames > block.freeFrames)){
+		worstLocation=block;
+	}
+	return (block.freeFrames < targetFrames)? 0:(void*)(worstLocation.startAddress +(PAGE_SIZE *targetFrames)) - size ;
 }
 void* kmalloc(unsigned int size)
 {
-//	cprintf("Hello in Kmalloc\n");
 	//TODO: [PROJECT 2022 - [1] Kernel Heap] kmalloc()
 	// Write your code here, remove the panic and write your code
 	//kpanic_into_prompt("kmalloc() is not implemented yet...!!");
@@ -124,14 +147,17 @@ void* kmalloc(unsigned int size)
 		 startAddress = (uint32)nextFit(size);
 	}
 	//kmalloc with best fit
-	else{
-		cprintf("Run with Best fit\n");
+	else if(isKHeapPlacementStrategyBESTFIT()){
+//		cprintf("Run with Best fit\n");
 		startAddress = (uint32)bestFit(size);
+	}
+	else if(isKHeapPlacementStrategyWORSTFIT()){
+		startAddress=(uint32)worstFit(size);
 	}
 
 //	cprintf("Start Address: %x\n",startAddress);
 	if (!startAddress){
-		cprintf("Successful kmalloc with no space \n");
+//		cprintf("Successful kmalloc with no space \n");
 		return 0;	//there is no enough space
 	}
 	uint32 tempStartAddress = startAddress;
@@ -141,20 +167,20 @@ void* kmalloc(unsigned int size)
 	while(numberOfPages--){
 		ptr_frame_info=0;
 		allocate_frame(&ptr_frame_info);
-		map_frame(ptr_page_directory, ptr_frame_info, (void*)tempStartAddress, PERM_PRESENT | PERM_WRITEABLE);
+		map_frame(ptr_page_directory, ptr_frame_info, (void*)tempStartAddress,framePermission);
 		kernelHeapPageIndex=(tempStartAddress - KERNEL_HEAP_START) / PAGE_SIZE;
 		kernelHeapPages[kernelHeapPageIndex].startAddress = startAddress;
 		kernelHeapPages[kernelHeapPageIndex].isEmpty=0;
 		tempStartAddress += PAGE_SIZE;
 	}
 	lastAllocatedKHpage = startAddress + PAGE_SIZE * (size/PAGE_SIZE);
-	cprintf("Successful kmalloc with Start Address: %x\n",startAddress);
+//	cprintf("Successful kmalloc with Start Address: %x\n",startAddress);
 	return (void*)startAddress;
 }
+
 void kfree(void* virtual_address)
 {
 	//TODO: [PROJECT 2022 - [2] Kernel Heap] kfree()
-	// Write your code here, remove the panic and write your code
 //	panic("kfree() is not implemented yet...!!");
 
 	uint32 Start = (uint32)virtual_address;
@@ -177,13 +203,11 @@ void kfree(void* virtual_address)
 unsigned int kheap_virtual_address(unsigned int physical_address)
 {
 	//TODO: [PROJECT 2022 - [3] Kernel Heap] kheap_virtual_address()
-	// Write your code here, remove the panic and write your code
 //	panic("kheap_virtual_address() is not implemented yet...!!");
 
 	//return the virtual address corresponding to given physical_address
 	//refer to the project presentation and documentation for details
 
-	//change this "return" according to your answer
 	struct Frame_Info* frameInfo ;
 	uint32* ptr_page_table;
 	for(uint32 i = KERNEL_HEAP_START ; i<=lastAllocatedKHpage ; i+=PAGE_SIZE){
@@ -195,21 +219,22 @@ unsigned int kheap_virtual_address(unsigned int physical_address)
 	}
 	return 0;
 }
+int getPageTableIndex(uint32 virtualAddress){
+	return PTX(virtualAddress);
+}
 unsigned int kheap_physical_address(unsigned int virtual_address)
 {
 	//TODO: [PROJECT 2022 - [4] Kernel Heap] kheap_physical_address()
-	// Write your code here, remove the panic and write your code
 //	panic("kheap_physical_address() is not implemented yet...!!");
 
 	//return the physical address corresponding to given virtual_address
 	//refer to the project presentation and documentation for details
-	//change this "return" according to your answer
 
 	uint32* pageTableVA = NULL;
 	get_page_table(ptr_page_directory, (void*)virtual_address, &pageTableVA);
 	if(pageTableVA != NULL){
 		//physical address= frame number * page size
-		return (pageTableVA[PTX(virtual_address)]>>12) * PAGE_SIZE;
+		return (pageTableVA[getPageTableIndex(virtual_address)]>>12) * PAGE_SIZE;
 	}
 	return 0;
 }
